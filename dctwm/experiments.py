@@ -1,12 +1,12 @@
-"""Computational experiments for the hybrid DCT+DWT watermarking report.
+"""Computational experiments for the blind DCT inter-block watermarking report.
 
-Run as ``python -m dwtdct.experiments``. Produces, in ``kriptoprak3/images/``:
+Run as ``python -m dctwm.experiments``. Produces, in ``kriptoprak3/images/``:
 
 * the cover image, the binary watermark, the stego image and a difference map;
-* an imperceptibility study versus the embedding strength ``alpha``;
+* an imperceptibility study versus the region width ``T``;
 * a robustness study (clean / JPEG at several qualities / brightness / noise /
   scaling / cropping) with the recovered watermarks;
-* a robustness-versus-alpha study under JPEG compression;
+* a robustness-versus-T study under JPEG compression;
 * CSV tables, a JSON summary and a Markdown digest used to fill the report.
 """
 
@@ -31,8 +31,9 @@ from . import metrics as M
 OUT_DIR = Path(__file__).resolve().parents[1] / "images"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-WM_SIZE = 64
-DEFAULT_ALPHA = 20.0
+DEFAULT_T = 60.0
+DEFAULT_t = 12.0
+DEFAULT_ALPHA = 2.0
 DEFAULT_ITERS = 10
 
 
@@ -42,11 +43,10 @@ DEFAULT_ITERS = 10
 
 def make_cover() -> np.ndarray:
     """512x512 grayscale standard test image (`camera`)."""
-    img = data.camera()
-    return img.astype(np.uint8)
+    return data.camera().astype(np.uint8)
 
 
-def make_watermark(size: int = WM_SIZE) -> np.ndarray:
+def make_watermark(size: int) -> np.ndarray:
     """Recognisable binary logo (the letters 'HSE' + frame), size x size."""
     scale = 8
     big = Image.new("L", (size * scale, size * scale), color=0)
@@ -137,8 +137,9 @@ def attack_crop(stego: np.ndarray, frac: float) -> np.ndarray:
 
 def experiment_example(cover, mark):
     print("[exp 1] example embedding (default parameters) ...")
-    stego, params = wm.embed(cover, mark, alpha=DEFAULT_ALPHA, arnold_iters=DEFAULT_ITERS)
-    rec = wm.extract(stego, cover, params)
+    stego, params = wm.embed(cover, mark, T=DEFAULT_T, t=DEFAULT_t,
+                             alpha=DEFAULT_ALPHA, arnold_iters=DEFAULT_ITERS)
+    rec = wm.extract(stego, params)
     save_image(stego, OUT_DIR / "stego.png")
     save_image((rec * 255).astype(np.uint8), OUT_DIR / "recovered_clean.png")
 
@@ -153,6 +154,8 @@ def experiment_example(cover, mark):
     plt.close(fig)
 
     metrics = {
+        "T": DEFAULT_T,
+        "t": DEFAULT_t,
         "alpha": DEFAULT_ALPHA,
         "arnold_iters": DEFAULT_ITERS,
         "psnr_db": M.psnr(cover, stego),
@@ -167,30 +170,31 @@ def experiment_example(cover, mark):
     return metrics
 
 
-def experiment_alpha(cover, mark):
-    print("[exp 2] imperceptibility vs alpha ...")
-    alphas = [5, 10, 20, 30, 40, 60]
+def experiment_T(cover, mark):
+    print("[exp 2] imperceptibility vs T ...")
+    ts = [20, 40, 60, 80, 100, 120]
     rows = []
     stegos = {}
-    for a in alphas:
-        stego, params = wm.embed(cover, mark, alpha=a, arnold_iters=DEFAULT_ITERS)
-        rec = wm.extract(stego, cover, params)
+    for T in ts:
+        stego, params = wm.embed(cover, mark, T=T, t=DEFAULT_t,
+                                 alpha=DEFAULT_ALPHA, arnold_iters=DEFAULT_ITERS)
+        rec = wm.extract(stego, params)
         rows.append({
-            "alpha": a,
+            "T": T,
             "psnr_db": M.psnr(cover, stego),
             "mse": M.mse(cover, stego),
             "ssim": M.ssim(cover, stego),
             "clean_ber": M.ber(mark, rec),
             "clean_ncc": M.ncc(mark, rec),
         })
-        stegos[a] = stego
-        print(f"        alpha={a:>3}  PSNR={rows[-1]['psnr_db']:.2f} dB  "
-              f"SSIM={rows[-1]['ssim']:.4f}")
+        stegos[T] = stego
+        print(f"        T={T:>3}  PSNR={rows[-1]['psnr_db']:.2f} dB  "
+              f"SSIM={rows[-1]['ssim']:.4f}  cleanBER={rows[-1]['clean_ber']:.4f}")
 
     fig, ax1 = plt.subplots(figsize=(6.5, 4.0))
-    xs = [r["alpha"] for r in rows]
+    xs = [r["T"] for r in rows]
     ax1.plot(xs, [r["psnr_db"] for r in rows], "o-", color="navy", label="PSNR")
-    ax1.set_xlabel("alpha")
+    ax1.set_xlabel("T")
     ax1.set_ylabel("PSNR, dB", color="navy")
     ax1.tick_params(axis="y", labelcolor="navy")
     ax2 = ax1.twinx()
@@ -198,17 +202,18 @@ def experiment_alpha(cover, mark):
     ax2.set_ylabel("SSIM", color="darkred")
     ax2.tick_params(axis="y", labelcolor="darkred")
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "psnr_ssim_vs_alpha.png", dpi=130)
+    fig.savefig(OUT_DIR / "psnr_ssim_vs_T.png", dpi=130)
     plt.close(fig)
 
-    save_image(stegos[5], OUT_DIR / "stego_alpha05.png")
-    save_image(stegos[60], OUT_DIR / "stego_alpha60.png")
+    save_image(stegos[20], OUT_DIR / "stego_T20.png")
+    save_image(stegos[120], OUT_DIR / "stego_T120.png")
     return rows
 
 
-def experiment_robustness(cover, mark, alpha=DEFAULT_ALPHA):
-    print(f"[exp 3] robustness to attacks (alpha={alpha}) ...")
-    stego, params = wm.embed(cover, mark, alpha=alpha, arnold_iters=DEFAULT_ITERS)
+def experiment_robustness(cover, mark, T=DEFAULT_T):
+    print(f"[exp 3] robustness to attacks (T={T}) ...")
+    stego, params = wm.embed(cover, mark, T=T, t=DEFAULT_t,
+                             alpha=DEFAULT_ALPHA, arnold_iters=DEFAULT_ITERS)
 
     attacks = [
         ("Без атаки", lambda s: s),
@@ -227,7 +232,7 @@ def experiment_robustness(cover, mark, alpha=DEFAULT_ALPHA):
     recovered = []
     for name, fn in attacks:
         attacked = fn(stego)
-        rec = wm.extract(attacked, cover, params)
+        rec = wm.extract(attacked, params)
         rows.append({
             "attack": name,
             "psnr_attacked": M.psnr(stego, attacked) if attacked.shape == stego.shape else float("nan"),
@@ -256,27 +261,28 @@ def experiment_robustness(cover, mark, alpha=DEFAULT_ALPHA):
     return rows
 
 
-def experiment_robustness_vs_alpha(cover, mark, quality=50):
-    print(f"[exp 4] robustness vs alpha under JPEG q={quality} ...")
-    alphas = [5, 10, 20, 30, 40, 60]
+def experiment_robustness_vs_T(cover, mark, quality=50):
+    print(f"[exp 4] robustness vs T under JPEG q={quality} ...")
+    ts = [20, 40, 60, 80, 100, 120]
     rows = []
-    for a in alphas:
-        stego, params = wm.embed(cover, mark, alpha=a, arnold_iters=DEFAULT_ITERS)
+    for T in ts:
+        stego, params = wm.embed(cover, mark, T=T, t=DEFAULT_t,
+                                 alpha=DEFAULT_ALPHA, arnold_iters=DEFAULT_ITERS)
         attacked = attack_jpeg(stego, quality)
-        rec = wm.extract(attacked, cover, params)
+        rec = wm.extract(attacked, params)
         rows.append({
-            "alpha": a,
+            "T": T,
             "psnr_db": M.psnr(cover, stego),
             "jpeg_ber": M.ber(mark, rec),
             "jpeg_ncc": M.ncc(mark, rec),
         })
-        print(f"        alpha={a:>3}  PSNR={rows[-1]['psnr_db']:.2f} dB  "
+        print(f"        T={T:>3}  PSNR={rows[-1]['psnr_db']:.2f} dB  "
               f"JPEG-NCC={rows[-1]['jpeg_ncc']:.4f}  BER={rows[-1]['jpeg_ber']:.4f}")
 
     fig, ax1 = plt.subplots(figsize=(6.5, 4.0))
-    xs = [r["alpha"] for r in rows]
+    xs = [r["T"] for r in rows]
     ax1.plot(xs, [r["jpeg_ncc"] for r in rows], "o-", color="green", label="NCC")
-    ax1.set_xlabel("alpha")
+    ax1.set_xlabel("T")
     ax1.set_ylabel(f"NCC after JPEG q={quality}", color="green")
     ax1.set_ylim(0, 1.02)
     ax1.tick_params(axis="y", labelcolor="green")
@@ -285,7 +291,7 @@ def experiment_robustness_vs_alpha(cover, mark, quality=50):
     ax2.set_ylabel("PSNR (stego), dB", color="navy")
     ax2.tick_params(axis="y", labelcolor="navy")
     fig.tight_layout()
-    fig.savefig(OUT_DIR / "ncc_vs_alpha_jpeg.png", dpi=130)
+    fig.savefig(OUT_DIR / "ncc_vs_T_jpeg.png", dpi=130)
     plt.close(fig)
     return rows
 
@@ -305,48 +311,52 @@ def write_csv(path: Path, rows: list[dict]) -> None:
 
 def main() -> None:
     cover = make_cover()
-    mark = make_watermark()
+    wm_size = cover.shape[0] // 8 - 1
+    mark = make_watermark(wm_size)
     save_image(cover, OUT_DIR / "cover.png")
     save_image((mark * 255).astype(np.uint8), OUT_DIR / "watermark.png")
     print(f"cover: {cover.shape}  watermark: {mark.shape}")
 
     m1 = experiment_example(cover, mark)
-    rows_alpha = experiment_alpha(cover, mark)
+    rows_T = experiment_T(cover, mark)
     rows_rob = experiment_robustness(cover, mark)
-    rows_rob_alpha = experiment_robustness_vs_alpha(cover, mark)
+    rows_rob_T = experiment_robustness_vs_T(cover, mark)
 
-    write_csv(OUT_DIR / "alpha.csv", rows_alpha)
+    write_csv(OUT_DIR / "imperceptibility_vs_T.csv", rows_T)
     write_csv(OUT_DIR / "robustness.csv", rows_rob)
-    write_csv(OUT_DIR / "robustness_vs_alpha.csv", rows_rob_alpha)
+    write_csv(OUT_DIR / "robustness_vs_T.csv", rows_rob_T)
 
     summary = {
         "cover_shape": list(cover.shape),
         "wm_size": int(mark.shape[0]),
         "experiment_1_example": m1,
-        "experiment_2_alpha": rows_alpha,
+        "experiment_2_T": rows_T,
         "experiment_3_robustness": rows_rob,
-        "experiment_4_robustness_vs_alpha": rows_rob_alpha,
+        "experiment_4_robustness_vs_T": rows_rob_T,
     }
     (OUT_DIR / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False))
 
-    lines = ["# DCT+DWT watermarking — experiments summary", ""]
+    lines = ["# DCT inter-block watermarking — experiments summary", ""]
     lines.append(f"Cover {cover.shape}, watermark {mark.shape}, "
-                 f"alpha={DEFAULT_ALPHA}, arnold={DEFAULT_ITERS}")
+                 f"T={DEFAULT_T}, t={DEFAULT_t}, alpha={DEFAULT_ALPHA}, arnold={DEFAULT_ITERS}")
     lines += ["", "## Exp 1 — example"]
     for k, v in m1.items():
         lines.append(f"* {k}: {v}")
-    lines += ["", "## Exp 2 — imperceptibility vs alpha",
-              "| alpha | PSNR dB | SSIM | clean BER |", "|---|---|---|---|"]
-    for r in rows_alpha:
-        lines.append(f"| {r['alpha']} | {r['psnr_db']:.2f} | {r['ssim']:.4f} | {r['clean_ber']:.4f} |")
-    lines += ["", "## Exp 3 — robustness (alpha=20)",
+    lines += ["", "## Exp 2 — imperceptibility vs T",
+              "| T | PSNR dB | MSE | SSIM | clean BER |", "|---|---|---|---|---|"]
+    for r in rows_T:
+        lines.append(f"| {r['T']} | {r['psnr_db']:.2f} | {r['mse']:.3f} | "
+                     f"{r['ssim']:.4f} | {r['clean_ber']:.4f} |")
+    lines += ["", "## Exp 3 — robustness (T=60)",
               "| attack | PSNR att. | BER | NCC |", "|---|---|---|---|"]
     for r in rows_rob:
-        lines.append(f"| {r['attack']} | {r['psnr_attacked']:.2f} | {r['ber']:.4f} | {r['ncc']:.4f} |")
-    lines += ["", "## Exp 4 — robustness vs alpha (JPEG q=50)",
-              "| alpha | PSNR dB | JPEG BER | JPEG NCC |", "|---|---|---|---|"]
-    for r in rows_rob_alpha:
-        lines.append(f"| {r['alpha']} | {r['psnr_db']:.2f} | {r['jpeg_ber']:.4f} | {r['jpeg_ncc']:.4f} |")
+        lines.append(f"| {r['attack']} | {r['psnr_attacked']:.2f} | "
+                     f"{r['ber']:.4f} | {r['ncc']:.4f} |")
+    lines += ["", "## Exp 4 — robustness vs T (JPEG q=50)",
+              "| T | PSNR dB | JPEG BER | JPEG NCC |", "|---|---|---|---|"]
+    for r in rows_rob_T:
+        lines.append(f"| {r['T']} | {r['psnr_db']:.2f} | "
+                     f"{r['jpeg_ber']:.4f} | {r['jpeg_ncc']:.4f} |")
     (OUT_DIR / "summary.md").write_text("\n".join(lines))
     print(f"\nDone. Output in {OUT_DIR}")
 

@@ -1,12 +1,13 @@
-"""Command-line interface for the hybrid DCT+DWT watermarking method.
+"""Command-line interface for the blind DCT inter-block watermarking method.
 
 Usage examples::
 
-    python -m dwtdct embed   --cover cover.png --watermark wm.png \\
-                             --stego stego.png --params params.json
-    python -m dwtdct extract --stego stego.png --cover cover.png \\
-                             --params params.json --output recovered.png \\
-                             [--watermark wm.png]
+    python -m dctwm embed   --cover cover.png --watermark wm.png \\
+                            --stego stego.png --params params.json
+    python -m dctwm extract --stego stego.png --params params.json \\
+                            --output recovered.png [--watermark wm.png]
+
+Extraction is *blind*: it does not need the original cover image.
 """
 
 from __future__ import annotations
@@ -40,7 +41,10 @@ def cmd_embed(args: argparse.Namespace) -> int:
     cover = _load_gray(Path(args.cover))
     mark = _load_binary(Path(args.watermark))
 
-    stego, params = wm.embed(cover, mark, alpha=args.alpha, arnold_iters=args.iters)
+    stego, params = wm.embed(
+        cover, mark, T=args.T, t=args.t, alpha=args.alpha,
+        arnold_iters=args.iters,
+    )
 
     _save_image(stego, Path(args.stego))
     Path(args.params).write_text(json.dumps(params.to_dict(), indent=2))
@@ -48,7 +52,8 @@ def cmd_embed(args: argparse.Namespace) -> int:
     print(f"cover     : {args.cover}  shape={cover.shape}")
     print(f"watermark : {args.watermark}  {mark.shape}")
     print(f"stego     : {args.stego}")
-    print(f"params    : {args.params}  (alpha={args.alpha}, arnold={args.iters})")
+    print(f"params    : {args.params}  (T={args.T}, t={args.t}, "
+          f"alpha={args.alpha}, arnold={args.iters})")
     print(f"PSNR      : {M.psnr(cover, stego):.4f} dB")
     print(f"MSE       : {M.mse(cover, stego):.4f}")
     print(f"RMSE      : {M.rmse(cover, stego):.4f}")
@@ -58,10 +63,9 @@ def cmd_embed(args: argparse.Namespace) -> int:
 
 def cmd_extract(args: argparse.Namespace) -> int:
     stego = _load_gray(Path(args.stego))
-    cover = _load_gray(Path(args.cover))
     params = wm.EmbedParams.from_dict(json.loads(Path(args.params).read_text()))
 
-    recovered = wm.extract(stego, cover, params)
+    recovered = wm.extract(stego, params)
     _save_image((recovered * 255).astype(np.uint8), Path(args.output))
     print(f"extracted watermark -> {args.output}  {recovered.shape}")
 
@@ -75,8 +79,8 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="dwtdct",
-        description="Hybrid DCT+DWT robust image watermarking",
+        prog="dctwm",
+        description="Robust blind DCT inter-block coefficient watermarking",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -85,13 +89,14 @@ def build_parser() -> argparse.ArgumentParser:
     pe.add_argument("--watermark", required=True, help="binary watermark image")
     pe.add_argument("--stego", required=True)
     pe.add_argument("--params", required=True)
-    pe.add_argument("--alpha", type=float, default=20.0)
+    pe.add_argument("--T", type=float, default=60.0, help="difference region width")
+    pe.add_argument("--t", type=float, default=12.0, help="guard to region boundary")
+    pe.add_argument("--alpha", type=float, default=2.0, help="adaptive strength scale")
     pe.add_argument("--iters", type=int, default=10, help="Arnold iterations")
     pe.set_defaults(func=cmd_embed)
 
-    px = sub.add_parser("extract", help="extract a watermark (non-blind)")
+    px = sub.add_parser("extract", help="extract a watermark (blind)")
     px.add_argument("--stego", required=True)
-    px.add_argument("--cover", required=True, help="original cover image")
     px.add_argument("--params", required=True)
     px.add_argument("--output", required=True)
     px.add_argument("--watermark", help="original watermark, to report BER/NCC")

@@ -1,4 +1,4 @@
-"""Hybrid DCT + DWT robust image watermarking (Practical work 5)."""
+"""Robust blind DCT inter-block coefficient watermarking (Practical work 5)."""
 
 from .watermark import (
     EmbedParams,
